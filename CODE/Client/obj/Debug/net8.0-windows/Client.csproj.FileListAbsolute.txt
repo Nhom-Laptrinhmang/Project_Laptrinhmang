@@ -1,0 +1,15 @@
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.GeneratedMSBuildEditorConfig.editorconfig
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.AssemblyInfoInputs.cache
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.AssemblyInfo.cs
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.csproj.CoreCompileInputs.cache
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.sourcelink.json
+D:\UTH\Lập trình mạng\git\CODE\Client\bin\Debug\net8.0-windows\Client.exe
+D:\UTH\Lập trình mạng\git\CODE\Client\bin\Debug\net8.0-windows\Client.deps.json
+D:\UTH\Lập trình mạng\git\CODE\Client\bin\Debug\net8.0-windows\Client.runtimeconfig.json
+D:\UTH\Lập trình mạng\git\CODE\Client\bin\Debug\net8.0-windows\Client.dll
+D:\UTH\Lập trình mạng\git\CODE\Client\bin\Debug\net8.0-windows\Client.pdb
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.dll
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\refint\Client.dll
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.pdb
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\Client.genruntimeconfig.cache
+D:\UTH\Lập trình mạng\git\CODE\Client\obj\Debug\net8.0-windows\ref\Client.dll
