@@ -1,39 +1,15 @@
-# ==========================================
-# 1. Chặn file rác cho phần Server (C# / .NET / C++)
-# ==========================================
-# Chặn các thư mục biên dịch bin và obj ở bất kỳ cấp nào
+## Các thư mục biên dịch sinh ra tự động (Rác)
 [Bb]in/
-[Ob]j/
+[Oo]bj/
+Generated\ Files/
 
-# File cấu hình cá nhân của Visual Studio / VS Code
+## Thư mục cấu hình ẩn của Visual Studio
 .vs/
-.vscode/
-*.user
 *.suo
+*.user
 *.userosscache
 *.sln.docstates
 
-# ==========================================
-# 2. Chặn file rác cho phần Client (Node.js / React / Vue)
-# ==========================================
-# Chặn thư mục cài đặt thư viện nặng (không bao giờ up cái này lên git)
-node_modules/
-
-# Chặn các thư mục build đầu ra của Frontend
-dist/
-build/
-.next/
-out/
-
-# Chặn file log khi chạy lỗi
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# ==========================================
-# 3. Chặn file rác của Hệ điều hành
-# ==========================================
-Thumbs.db
-Desktop.ini
-.DS_Store
+## Các file tạm, file log khi chạy ứng dụng
+*.log
+*.tmp
