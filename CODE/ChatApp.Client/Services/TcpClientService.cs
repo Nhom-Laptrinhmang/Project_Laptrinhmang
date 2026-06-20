@@ -2,7 +2,6 @@ using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-
 namespace Client.Services
     public class TcpClientService
     {
