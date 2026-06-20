@@ -3,13 +3,12 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
-namespace ChatApp.Shared.Services 
+namespace Client.Services
     public class TcpClientService
     {
         private TcpClient _client;
         private NetworkStream _stream;
         private Thread _receiveThread;
-        // Tạo sự kiện (event) để báo cho Form (UI) biết khi có tin nhắn mới
         public delegate void MessageReceivedHandler(string messageData);
         public event MessageReceivedHandler OnMessageReceived;
         public void Connect(string ip, int port)
@@ -19,7 +18,6 @@ namespace ChatApp.Shared.Services
                 _client = new TcpClient();
                 _client.Connect(ip, port);
                 _stream = _client.GetStream();
-                // Tạo một luồng (Thread) riêng chạy ngầm để liên tục đọc tin nhắn từ Server
                 _receiveThread = new Thread(ReceiveMessages);
                 _receiveThread.IsBackground = true; 
                 _receiveThread.Start();
@@ -33,7 +31,6 @@ namespace ChatApp.Shared.Services
         {
             if (_client != null && _client.Connected && _stream != null)
             {
-                // Chuyển chuỗi thành mảng byte để gửi đi
                 byte[] buffer = Encoding.UTF8.GetBytes(data);
                 _stream.Write(buffer, 0, buffer.Length);
             }
@@ -50,9 +47,7 @@ namespace ChatApp.Shared.Services
                         int bytesRead = _stream.Read(buffer, 0, buffer.Length);
                         if (bytesRead > 0)
                         {
-                            // Giải mã byte nhận được thành chuỗi
                             string receivedData = Encoding.UTF8.GetString(buffer, 0, bytesRead);                          
-                            // Bắn sự kiện ra ngoài cho Form xử lý
                             OnMessageReceived?.Invoke(receivedData);
                         }
                     }
@@ -61,7 +56,6 @@ namespace ChatApp.Shared.Services
             }
             catch
             {
-                // Xử lý khi mất kết nối (có thể log lỗi hoặc bắn event ngắt kết nối)
             }
         }
 
