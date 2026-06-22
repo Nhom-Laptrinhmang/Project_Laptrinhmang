@@ -2,8 +2,8 @@ using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-namespace Client.Services
-
+namespace ChatClient.Services
+{
     public class TcpClientService
     {
         private TcpClient _client;

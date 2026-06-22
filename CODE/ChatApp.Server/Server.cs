@@ -1,205 +1,156 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json;
-using System.Threading;
+using System.Threading.Tasks;
 using ChatApp.Shared.Network;
+using ChatApp.Server.Forms;
 
 namespace ChatApp.Server
 {
-    public class Server
+    public class ChatServer
     {
-        // --- THÀNH PHẦN MẠNG LÕI TCP/IP ---
-        private TcpListener _listener;
-        private List<ClientHandler> _clients = new List<ClientHandler>();
+        private readonly TcpListener _listener;
+        private readonly ConcurrentDictionary<Guid, ClientHandler> _clients;
+        private readonly MessageRouter _router;
         private bool _isRunning;
-        private Action<string> _logCallback;
+        private readonly ServerForm _form;
 
-        // --- CÁC THÀNH PHẦN QUẢN LÝ TÍNH NĂNG NÂNG CAO ---
-        private ChatHistory _chatHistory = new ChatHistory();
-        private MessageRouter _messageRouter;
+        public event Action<string>? OnLog;
 
-        // Thuộc tính mở (Property) để các luồng ClientHandler dễ dàng gọi bộ định tuyến MessageRouter
-        public MessageRouter MessageRouterInstance => _messageRouter;
-
-        // --- HÀM KHỞI TẠO SERVER ---
-        public Server(int port, Action<string> logCallback)
+        public ChatServer(int port, ServerForm form)
         {
-            // Lắng nghe ở bất kỳ địa chỉ IP nào của máy tính thông qua Cổng (Port) chỉ định
             _listener = new TcpListener(IPAddress.Any, port);
-            _logCallback = logCallback;
-
-            // Kết nối các khối logic điều hướng và lưu trữ vào Server
-            _messageRouter = new MessageRouter(this, _chatHistory);
+            _clients = new ConcurrentDictionary<Guid, ClientHandler>();
+            _router = new MessageRouter(this);
         }
 
-        // --- KHỞI CHẠY SERVER ---
         public void Start()
         {
             _isRunning = true;
             _listener.Start();
+            Log($"Server đã khởi động trên cổng {_listener.LocalEndpoint}");
 
-            // Đọc cổng thực tế mà máy đang cấp phép chạy
-            int activePort = ((IPEndPoint)_listener.LocalEndpoint).Port;
-            Log($"Server đã khởi động thành công trên cổng {activePort} và đang lắng nghe...");
-
-            // Tạo luồng ngầm chuyên đứng ở cổng mạng để canh và đón Client kết nối vào
-            Thread acceptThread = new Thread(AcceptClients);
-            acceptThread.IsBackground = true;
-            acceptThread.Start();
+            Task.Run(ListenForClientsAsync);
         }
 
-        // --- LUỒNG CHỜ ĐÓN CÁC CLIENT VÀO PHÒNG CHỜ ---
-        private void AcceptClients()
+        private async Task ListenForClientsAsync()
         {
             while (_isRunning)
             {
                 try
                 {
-                    // Lệnh này dừng luồng lại để đợi kết nối vật lý, khi có Client chạm vào -> Sinh ra đối tượng TcpClient
-                    TcpClient client = _listener.AcceptTcpClient();
+                    TcpClient tcpClient = await _listener.AcceptTcpClientAsync();
+                    Guid clientId = Guid.NewGuid();
 
-                    // Tạo một người quản lý riêng biệt cho kết nối mới này
-                    ClientHandler handler = new ClientHandler(client, this);
+                    Log($"Client mới kết nối... ID: {clientId}");
+
+                    var handler = new ClientHandler(clientId, tcpClient, _router);
+
+                    if (_clients.TryAdd(clientId, handler))
+                    {
+                        handler.OnDisconnected += RemoveClient;
+                        handler.StartListening();
+
+                        _form.UpdateClientList(_clients);
+                    }
+                    else
+                    {
+                        tcpClient.Close();
+                    }
+
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Thoát luồng nếu Listener bị dừng đột ngột
-                    break;
+                    if (_isRunning) Log($"Lỗi kết nối: {ex.Message}");
                 }
             }
         }
 
-        // --- QUẢN LÝ THÊM/XÓA CLIENT TRONG DANH SÁCH (DÙNG CƠ CHẾ LOCK AN TOÀN LUỒNG) ---
-        public void AddClient(ClientHandler client)
+        // Phát loa công khai cho tất cả mọi người (Public)
+        public void Broadcast(Protocol protocol, string jsonPayload, Guid? senderId = null)
         {
-            lock (_clients)
+            string safePayload = jsonPayload ?? string.Empty;
+
+            foreach (var client in _clients.Values)
             {
-                if (!_clients.Contains(client))
-                {
-                    _clients.Add(client);
-                }
+                if (senderId.HasValue && client.Id == senderId.Value)
+                    continue;
+
+                client?.SendAsync(protocol, safePayload);
             }
         }
 
-        public void RemoveClient(ClientHandler client)
+        // Gửi tin nhắn riêng tư đích danh cho 1 người (Private)
+        public bool SendToTarget(Guid targetClientId, Protocol protocol, string jsonPayload)
         {
-            lock (_clients)
+            if (_clients.TryGetValue(targetClientId, out var client))
             {
-                _clients.Remove(client);
+                client?.SendAsync(protocol, jsonPayload ?? string.Empty);
+                return true;
             }
-            if (!string.IsNullOrEmpty(client.Username))
-            {
-                Log($"Người dùng '{client.Username}' đã ngắt kết nối.");
-
-                // Cập nhật lại danh sách online cho những người còn lại biết
-                BroadcastUserList();
-                Broadcast(new MessagePacket(CommandType.BroadcastMessage, "Hệ thống", $"{client.Username} đã rời phòng chat."));
-            }
+            return false; // Trả về false nếu không tìm thấy người nhận (họ đã offline)
         }
 
-        // --- KIỂM TRA TRÙNG TÊN ĐĂNG NHẬP ---
-        public bool IsUsernameTaken(string username)
+        private void RemoveClient(Guid clientId)
         {
-            lock (_clients)
+            if (_clients.TryRemove(clientId, out var handler))
             {
-                return _clients.Any(c => c.Username != null && c.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+                Log($"Client {clientId} đã ngắt kết nối.");
+                Broadcast(Protocol.Disconnect, clientId.ToString());
+
+                _form.UpdateClientList(_clients);
             }
+            
+
         }
 
-        // --- GỬI TIN NHẮN PHÒNG CHUNG (BROADCAST) ---
-        public void Broadcast(MessagePacket packet)
-        {
-            List<ClientHandler> targets;
-            lock (_clients)
-            {
-                // Sao chép danh sách ra mảng tạm để tránh lỗi xung đột bộ nhớ khi duyệt vòng lặp foreach đa luồng
-                targets = _clients.Where(c => !string.IsNullOrEmpty(c.Username)).ToList();
-            }
-
-            foreach (var client in targets)
-            {
-                client.SendPacket(packet);
-            }
-        }
-
-        // --- ĐIỀU HƯỚNG TIN CHAT RIÊNG BIỆT (PRIVATE MESSAGE) ---
-        public void RouteMessage(MessagePacket packet)
-        {
-            Log($"[Tin Nhắn] Từ: {packet.Sender} -> Đến: {packet.Recipient}. Nội dung: {packet.Content}");
-
-            if (packet.Recipient == "All")
-            {
-                Broadcast(packet);
-            }
-            else
-            {
-                List<ClientHandler> localClients;
-                lock (_clients)
-                {
-                    localClients = _clients.ToList();
-                }
-
-                // 1. Gửi gói tin sang cho người nhận đích thực
-                var target = localClients.FirstOrDefault(c => c.Username == packet.Recipient);
-                target?.SendPacket(packet);
-
-                // 2. Gửi ngược lại cho chính người vừa gõ để hiển thị lên khung chat đôi của họ
-                var sender = localClients.FirstOrDefault(c => c.Username == packet.Sender);
-                if (sender != target)
-                {
-                    sender?.SendPacket(packet);
-                }
-            }
-        }
-
-        // --- PHÁT SÓNG CẬP NHẬT DANH SÁCH USER ONLINE ---
-        public void BroadcastUserList()
-        {
-            lock (_clients)
-            {
-                // Gom tất cả các tên người dùng đang online hợp lệ vào danh sách string
-                var activeUsers = _clients.Where(c => !string.IsNullOrEmpty(c.Username)).Select(c => c.Username).ToList();
-
-                // Đóng gói danh sách mảng chuỗi thành cấu trúc văn bản JSON gọn gàng
-                string jsonUserList = JsonSerializer.Serialize(activeUsers);
-                var packet = new MessagePacket(CommandType.UserListUpdate, "Server", jsonUserList);
-
-                // Đẩy hạt tin danh sách xuống cho từng máy một
-                foreach (var client in _clients.Where(c => !string.IsNullOrEmpty(c.Username)))
-                {
-                    client.SendPacket(packet);
-                }
-            }
-        }
-
-        // --- IN THÔNG TIN HOẠT ĐỘNG RA GIAO DIỆN CHÍNH SERVER ---
         public void Log(string message)
         {
-            // Gọi hàm Callback an toàn để đẩy text lên TextBox giao diện WinForms ở Main Thread
-            _logCallback?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
+            OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
+        }
+        // ==================== THÊM ĐOẠN NÀY VÀO FILE SERVER.CS ====================
+
+        // Hàm trục xuất 1 Client đích danh khỏi phòng chat
+        public void KickClient(Guid clientId)
+        {
+            // Tìm kiếm xem Client này có đang online trong cuốn sổ danh sách không
+            if (_clients.TryGetValue(clientId, out var client))
+            {
+                Log($"[Hệ Thống] Đang thực hiện trục xuất Client có ID: {clientId}");
+
+                // 1. Gửi tín hiệu thông báo ép buộc ngắt kết nối về phía app của khách
+                client.SendAsync(Protocol.Disconnect, "Bạn đã bị quản trị viên trục xuất khỏi máy chủ!");
+
+                // 2. Chủ động đóng đường truyền mạng của Client đó (Hàm này tự động gạch tên họ khỏi ListView luôn)
+                client.Disconnect();
+            }
         }
 
-        // --- DỪNG HOẠT ĐỘNG MÁY CHỦ AN TOÀN ---
+        // Hàm trục xuất SẠCH SẼ toàn bộ Client đang kết nối
+        public void KickAll()
+        {
+            Log("[Hệ Thống] Đang thực hiện giải tán phòng, trục xuất tất cả mọi người.");
+
+            // Quét qua toàn bộ danh sách ID mạng đang hoạt động để đuổi từng người một
+            foreach (var clientId in _clients.Keys)
+            {
+                KickClient(clientId);
+            }
+        }
+
+
         public void Stop()
         {
             _isRunning = false;
-            _listener?.Stop();
+            _listener.Stop();
 
-            // Xóa sạch lịch sử tạm trong RAM
-            _chatHistory.ClearAll();
-
-            lock (_clients)
+            foreach (var client in _clients.Values)
             {
-                foreach (var client in _clients)
-                {
-                    client.Disconnect();
-                }
-                _clients.Clear();
+                client?.Disconnect();
             }
-            Log("Server đã dừng hoạt động.");
+            _clients.Clear();
+            Log("Server đã dừng.");
         }
     }
 }

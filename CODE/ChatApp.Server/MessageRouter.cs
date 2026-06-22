@@ -1,77 +1,111 @@
 using System;
+using System.Text.Json;
 using ChatApp.Shared.Network;
 
 namespace ChatApp.Server
 {
     public class MessageRouter
     {
-        private readonly Server _server;
-        private readonly ChatHistory _chatHistory;
+        private readonly ChatServer _server;
+        private readonly ChatHistory _history;
 
-        public MessageRouter(Server server, ChatHistory chatHistory)
+        public MessageRouter(ChatServer server)
         {
             _server = server ?? throw new ArgumentNullException(nameof(server));
-            _chatHistory = chatHistory ?? throw new ArgumentNullException(nameof(chatHistory));
+            _history = new ChatHistory();
         }
 
-        /// <summary>
-        /// Phân tích gói tin TCP/IP nhận được và đưa ra quyết định xử lý phù hợp
-        /// </summary>
-        public void Route(MessagePacket packet)
+        public void Route(Guid senderId, Protocol protocol, string rawData, ClientHandler handler)
         {
-            if (packet == null) return;
+            string safeData = rawData ?? string.Empty;
 
-            switch (packet.Command)
+            try
             {
-                case CommandType.BroadcastMessage:
-                    HandleBroadcast(packet);
-                    break;
+                switch (protocol)
+                {
+                    case Protocol.Connect:
+                        handler.ClientName = safeData;
+                        _server.Log($"User [{handler.ClientName}] (ID: {senderId}) đã đăng nhập.");
+                        _server.Broadcast(Protocol.Connect, $"Hệ thống: {handler.ClientName} đã tham gia phòng.");
+                        break;
 
-                case CommandType.PrivateMessage:
-                    HandlePrivateMessage(packet);
-                    break;
+                    case Protocol.UpdateAvatar:
+                        handler.AvatarBase64 = safeData;
+                        _server.Log($"User [{handler.ClientName}] vừa cập nhật hình ảnh đại diện.");
+                        break;
 
-                default:
-                    _server.Log($"[Cảnh báo] Nhận được gói tin có lệnh không xác định: {packet.Command} từ {packet.Sender}");
-                    break;
+                    // XỬ LÝ CHAT PRIVATE (RIÊNG TƯ)
+                    case Protocol.PrivateMessage:
+                        var privatePacket = JsonSerializer.Deserialize<ChatPacket>(safeData);
+                        if (privatePacket != null)
+                        {
+                            privatePacket.SenderId = senderId.ToString();
+                            privatePacket.SenderName = handler.ClientName ?? "Ẩn danh";
+                            privatePacket.AvatarBase64 = handler.AvatarBase64;
+
+                            string processedJson = JsonSerializer.Serialize(privatePacket);
+
+                            // Kiểm tra xem Client có truyền lên ID người nhận hợp lệ không
+                            if (!string.IsNullOrEmpty(privatePacket.ReceiverId) && Guid.TryParse(privatePacket.ReceiverId, out Guid targetGuid))
+                            {
+                                _server.Log($"[{privatePacket.SenderName}] CHAT RIÊNG tới [ID: {privatePacket.ReceiverId?.Substring(0, 5)}]: {privatePacket.Content}");
+
+                                // 1. Gửi cho người nhận đích danh
+                                bool isSent = _server.SendToTarget(targetGuid, Protocol.PrivateMessage, processedJson);
+
+                                if (isSent)
+                                {
+                                    // 2. Gửi ngược lại cho chính người gửi để giao diện hiển thị lịch sử đối thoại của họ
+                                    _server.SendToTarget(senderId, Protocol.PrivateMessage, processedJson);
+                                }
+                                else
+                                {
+                                    // Báo lỗi cho người gửi nếu người nhận đã rời phòng chat
+                                    _server.Log($"Lỗi: Không tìm thấy người nhận {privatePacket.ReceiverId}. Có thể họ đã offline.");
+                                }
+                            }
+                        }
+                        break;
+
+                    // XỬ LÝ CHAT PUBLIC, REPLY, FORWARD (CÔNG KHAI)
+                    case Protocol.Message:
+                    case Protocol.Reply:
+                    case Protocol.Forward:
+                        var chatPacket = JsonSerializer.Deserialize<ChatPacket>(safeData);
+                        if (chatPacket != null)
+                        {
+                            chatPacket.SenderId = senderId.ToString();
+                            chatPacket.SenderName = handler.ClientName ?? "Ẩn danh";
+                            chatPacket.AvatarBase64 = handler.AvatarBase64;
+
+                            if (protocol == Protocol.Reply)
+                                _server.Log($"[{chatPacket.SenderName}] REPLY tin nhắn [{chatPacket.ReplyToMessageId?.Substring(0, 5)}]: {chatPacket.Content}");
+                            else if (protocol == Protocol.Forward)
+                                _server.Log($"[{chatPacket.SenderName}] FORWARD tin nhắn: {chatPacket.Content}");
+                            else
+                                _server.Log($"[{chatPacket.SenderName}] CHAT PUBLIC: {chatPacket.Content}");
+
+                            string processedJson = JsonSerializer.Serialize(chatPacket);
+                            _history.Save(chatPacket.SenderName, chatPacket.Content);
+
+                            // Phát loa cho toàn bộ mọi người trong phòng cùng nhận
+                            _server.Broadcast(protocol, processedJson);
+                        }
+                        break;
+
+                    case Protocol.Disconnect:
+                        _server.Log($"User {senderId} gửi yêu cầu rời ứng dụng.");
+                        break;
+
+                    default:
+                        _server.Log($"Nhận được mã Protocol không hợp lệ từ {senderId}");
+                        break;
+                }
             }
-        }
-
-        /// <summary>
-        /// Xử lý định tuyến tin nhắn phòng chung (Group Chat)
-        /// </summary>
-        private void HandleBroadcast(MessagePacket packet)
-        {
-            // 1. Kiểm tra nếu đây là một tin nhắn Reply (Phản hồi)
-            if (!string.IsNullOrEmpty(packet.ReplyToId) && string.IsNullOrEmpty(packet.ReplyToContent))
+            catch (Exception ex)
             {
-                // Truy vết tìm lại nội dung tin nhắn gốc từ kho dữ liệu lịch sử
-                packet.ReplyToContent = _chatHistory.GetMessageContent(packet.ReplyToId);
+                _server.Log($"Lỗi xử lý định tuyến dữ liệu: {ex.Message}");
             }
-
-            // 2. Lưu tin nhắn này vào lịch sử hệ thống
-            _chatHistory.SaveMessage(packet);
-
-            // 3. Ra lệnh cho Server phát sóng (Broadcast) gói tin này đến tất cả mọi Client online
-            _server.Broadcast(packet);
-        }
-
-        /// <summary>
-        /// Xử lý định tuyến tin nhắn riêng mật giữa 2 cá nhân (Private Chat)
-        /// </summary>
-        private void HandlePrivateMessage(MessagePacket packet)
-        {
-            // 1. Xử lý ngữ cảnh Reply cho tin nhắn riêng
-            if (!string.IsNullOrEmpty(packet.ReplyToId) && string.IsNullOrEmpty(packet.ReplyToContent))
-            {
-                packet.ReplyToContent = _chatHistory.GetMessageContent(packet.ReplyToId);
-            }
-
-            // 2. Lưu vết tin nhắn (phục vụ tính năng Reply chéo)
-            _chatHistory.SaveMessage(packet);
-
-            // 3. Yêu cầu Server chuyển tiếp chính xác đến đích danh người nhận và người gửi
-            _server.RouteMessage(packet);
         }
     }
 }

@@ -1,18 +1,19 @@
-// ChatApp.Server/Program.cs
 using System;
 using System.Windows.Forms;
-using ChatApp.Server.Forms;   // ← Quan trọng: using này
+using ChatApp.Server.Forms;
 
 namespace ChatApp.Server
 {
-    internal static class Program
+    static class Program
     {
         [STAThread]
         static void Main()
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new ServerForm());   // ← Phải match tên class + namespace
+
+            // Khởi chạy màn hình giao diện Server chính
+            Application.Run(new ServerForm());
         }
     }
 }
