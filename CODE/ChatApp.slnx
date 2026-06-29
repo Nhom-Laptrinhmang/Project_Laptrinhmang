@@ -1,0 +1,10 @@
+<Solution>
+  <!-- UMD-08 ChatApp - TCP Chat Application -->
+
+  <Folder Name="/CODE/">
+    <Project Path="ChatApp.Shared/ChatApp.Shared.csproj" />
+    <Project Path="ChatApp.Server/ChatApp.Server.csproj" />
+    <Project Path="ChatApp.Client/ChatApp.Client.csproj" />
+  </Folder>
+
+</Solution>
