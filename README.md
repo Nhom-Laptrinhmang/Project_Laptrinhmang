@@ -34,8 +34,8 @@
 ## 📋 Yêu cầu hệ thống
 
 - **Hệ điều hành:** Windows 10 / Windows 11
-- **.NET SDK:** Phiên bản **6.0 trở lên** 
-- **Visual Studio:** 2022 (khuyến nghị) hoặc 2019
+- **.NET SDK:** Phiên bản **8.0 trở lên** 
+- **Visual Studio:** 2026 (khuyến nghị) hoặc 2022
 
 ---
 
@@ -83,28 +83,32 @@ cd Project_Laptrinhmang
 ### Bước 5 — Chạy Server
 
 1. Trên thanh công cụ chọn tools -> Command line -> Developer PowerShell.
-2. Sau khi mở được Developer PowerShell, gõ lệnh cd CODE/Server -> cd dotnet run 
+2. Sau khi mở được Developer PowerShell, gõ lệnh cd CODE/Server -> dotnet run 
+3. Sau khi Server chạy bấm vào START SERVER để khởi động, chờ Client
 
 
 ---
 
 ### Bước 6 — Chạy Client
 
-1. Trong **Solution Explorer**, tìm project **Client** (ví dụ: `ChatClient`)
-2. Chuột phải vào project Client -> **Set as Startup Project**
-3. Nhấn **▶ Start** (hoặc `F5`) để chạy
-
+1. Trên thanh công cụ chọn tools -> Command line -> Developer PowerShell.
+2. Sau khi mở được Developer PowerShell, gõ lệnh cd CODE/Server -> dotnet run 
+3. Sau khi Client chạy, Nhập tên, nhập
 ---
+
+### Bước 7 — C
+
 
 ## 👥 Thành viên nhóm
 
 | Họ và tên | MSSV | GitHub |
 |---|---|---|
-| Bùi Ngọc Hải | | [@buingochai280120-prog](https://github.com/buingochai280120-prog) |
-| Đào Tuấn Anh | | [@Dtanh06](https://github.com/Dtanh06) |
-| Huỳnh Quốc Cường | | [@CuongCloud169](https://github.com/CuongCloud169) |
-| Trịnh Vũ Quang Huy | | [@trvuqhuy](https://github.com/trvuqhuy) |
-| Tô Nguyễn Khải | | [@nguyenkhai-hub](https://github.com/nguyenkhai-hub) |
-| Nguyễn Văn Khâm | | [@makNVor](https://github.com/makNVor) |
+| Bùi Ngọc Hải |080206000952| [@buingochai280120-prog](https://github.com/buingochai280120-prog) |
+| Đào Tuấn Anh |066206005506 | [@Dtanh06](https://github.com/Dtanh06) |
+| Huỳnh Quốc Cường |052206000403| [@CuongCloud169](https://github.com/CuongCloud169) |
+| Trịnh Vũ Quang Huy |035206004749 | [@trvuqhuy](https://github.com/trvuqhuy) |
+| Tô Nguyễn Khải |080206006982| [@nguyenkhai-hub](https://github.com/nguyenkhai-hub) |
+| Nguyễn Văn Khâm |058206001949 | [@makNVor](https://github.com/makNVor) |
+
 
 ---
