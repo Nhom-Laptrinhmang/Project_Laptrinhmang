@@ -1,4 +1,4 @@
-namespace Client.Forms
+namespace ChatApp.Client.Forms
 {
     partial class LoginForm
     {
@@ -30,10 +30,10 @@ namespace Client.Forms
             txtUsername.PlaceholderText = "Username";
 
             txtIP.Location = new Point(30, 70);
-            txtIP.Text = "127.0.0.1";
+            txtIP.Text = "";//127.0.0.1
 
             txtPort.Location = new Point(30, 110);
-            txtPort.Text = "5000";
+            txtPort.Text = "";
 
             btnConnect.Location = new Point(30, 150);
             btnConnect.Text = "Connect";

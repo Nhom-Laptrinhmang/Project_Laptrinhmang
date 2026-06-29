@@ -1,47 +1,37 @@
 using System;
 using System.Windows.Forms;
 
-namespace ChatApp.Client.Components
+namespace ChatApp.Client.Forms.Components
 {
-    public partial class EmojiPicker : UserControl
+    public class EmojiPicker : UserControl
     {
         public event Action<string> EmojiSelected;
+        private FlowLayoutPanel flowLayout;
 
-        private readonly string[] emojis = { 
-            "😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", 
-            "😋", "😎", "😍", "😘", "🥰", "😗", "😙", "😚", "🙂", "🤗", 
-            "🤩", "🤔", "🤨", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", 
-            "😮", "🤐", "😯", "😪", "😫", "🥱", "😴", "😌", "😛", "😜" 
-        };
+        // Tập hợp danh sách Emoji Real-time phổ biến
+        private readonly string[] emojis = { "😊", "❤", "💚", "👽", "🐸", "👍", "🔥", "🎉", "😂", "😮" };
 
         public EmojiPicker()
         {
-            InitializeComponent();
-            InitializeEmojiButtons();
+            flowLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true };
+            this.Controls.Add(flowLayout);
+            InitializePicker();
         }
 
-        private void InitializeEmojiButtons()
+        private void InitializePicker()
         {
-            if (flpEmojis == null) return;
-
-            flpEmojis.Controls.Clear();
+            flowLayout.Controls.Clear();
             foreach (var emoji in emojis)
             {
                 Button btn = new Button
                 {
                     Text = emoji,
-                    Width = 35,
-                    Height = 35,
+                    Size = new System.Drawing.Size(32, 32),
+                    Font = new System.Drawing.Font("Segoe UI Emoji", 12F),
                     FlatStyle = FlatStyle.Flat
                 };
-                btn.FlatAppearance.BorderSize = 0;
-
-                btn.Click += (s, e) =>
-                {
-                    EmojiSelected?.Invoke(btn.Text);
-                };
-
-                flpEmojis.Controls.Add(btn);
+                btn.Click += (s, e) => EmojiSelected?.Invoke(btn.Text);
+                flowLayout.Controls.Add(btn);
             }
         }
     }

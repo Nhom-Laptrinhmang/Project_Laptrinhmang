@@ -22,6 +22,12 @@ namespace ChatApp.Server.Forms
 
             // Đăng ký sự kiện click chọn dòng trong danh sách Client
             lvClients.SelectedIndexChanged += LvClients_SelectedIndexChanged;
+
+            // Cấu hình Font hỗ trợ hiển thị Emoji cho các ô Log chat trên giao diện Server
+            Font emojiFont = new Font("Segoe UI Emoji", 9.5F, FontStyle.Regular);
+            if (rtbPublicChat != null) rtbPublicChat.Font = emojiFont;
+            if (rtbPrivateChat != null) rtbPrivateChat.Font = emojiFont;
+            if (txtMessageInput != null) txtMessageInput.Font = emojiFont;
         }
 
         private void LoadDefaultValues()
@@ -33,7 +39,7 @@ namespace ChatApp.Server.Forms
             lblStatus.ForeColor = Color.Red;
             btnStopServer.Enabled = false;
             btnStartServer.Enabled = true;
-            lblReplyingTo.Text = "Trạng thái phản hồi: Trống";
+            if (lblReplyingTo != null) lblReplyingTo.Text = "Trạng thái phản hồi: Trống";
         }
 
         // Hàm này tự động quét dữ liệu từ Server gửi lên để vẽ lại bảng ListView
@@ -75,15 +81,21 @@ namespace ChatApp.Server.Forms
         {
             if (lvClients.SelectedItems.Count == 0)
             {
+                var oldImage = pbServerAvatar.Image;
                 pbServerAvatar.Image = null;
-                lblReplyingTo.Text = "Trạng thái phản hồi: Trống";
+                oldImage?.Dispose(); // Giải phóng RAM ảnh cũ
+
+                if (lblReplyingTo != null) lblReplyingTo.Text = "Trạng thái phản hồi: Trống";
                 return;
             }
 
-            var selectedItem = lvClients.SelectedItems[0]; // Sửa lấy phần tử đầu tiên
+            var selectedItem = lvClients.SelectedItems[0];
             if (selectedItem.Tag is Guid clientId)
             {
-                lblReplyingTo.Text = $"Đang chọn người dùng: {selectedItem.SubItems[1].Text}";
+                if (lblReplyingTo != null) lblReplyingTo.Text = $"Đang chọn người dùng: {selectedItem.SubItems[1].Text}";
+
+                // Dọn dẹp bộ nhớ ảnh cũ trước khi nạp ảnh mới
+                var oldImg = pbServerAvatar.Image;
 
                 if (_clientAvatars.TryGetValue(clientId, out string? base64Str) && !string.IsNullOrEmpty(base64Str))
                 {
@@ -91,8 +103,8 @@ namespace ChatApp.Server.Forms
                     {
                         if (base64Str == "MOCK_AVATAR_BASE64_STRING")
                         {
-                           
                             pbServerAvatar.Image = SystemIcons.Application.ToBitmap();
+                            oldImg?.Dispose();
                             return;
                         }
 
@@ -109,12 +121,13 @@ namespace ChatApp.Server.Forms
                 }
                 else
                 {
-                    // SỬA TẠI ĐÂY: Đổi sang Application nếu không tìm thấy ảnh đại diện
                     pbServerAvatar.Image = SystemIcons.Application.ToBitmap();
                 }
+
+                // Tiến hành giải phóng vùng nhớ GDI+ của ảnh trước đó
+                oldImg?.Dispose();
             }
         }
-
 
         // ====================== CÁC SỰ KIỆN NÚT BẤM KHÁC ======================
 
@@ -160,7 +173,11 @@ namespace ChatApp.Server.Forms
             lblStatus.ForeColor = Color.Red;
 
             lvClients.Items.Clear();
+
+            var oldImg = pbServerAvatar.Image;
             pbServerAvatar.Image = null;
+            oldImg?.Dispose();
+
             gbActiveClients.Text = "Active Clients (0)";
 
             if (_chatServer != null)
@@ -195,7 +212,11 @@ namespace ChatApp.Server.Forms
             {
                 _chatServer?.KickAll();
                 lvClients.Items.Clear();
+
+                var oldImg = pbServerAvatar.Image;
                 pbServerAvatar.Image = null;
+                oldImg?.Dispose();
+
                 gbActiveClients.Text = "Active Clients (0)";
             }
         }
@@ -205,7 +226,24 @@ namespace ChatApp.Server.Forms
             if (string.IsNullOrWhiteSpace(txtMessageInput.Text) || _chatServer == null) return;
 
             string msg = txtMessageInput.Text.Trim();
-            _chatServer.Broadcast(Protocol.Message, $"[Quản Trị Viên]: {msg}");
+
+            var packet = new MessagePacket
+            {
+                Type = Protocol.Message,
+                MessageId = Guid.NewGuid().ToString(),
+                Sender = "Hệ thống",
+                Content = $"[Quản Trị Viên]: {msg}",
+                Receiver = "All",
+                AvatarBase64 = "",
+                ReplyToId = "",
+                ReplyToContent = ""
+            };
+
+            // Sử dụng thư viện System.Text.Json chuẩn của hệ thống để đồng bộ hóa tốc độ cao
+            string jsonPacket = System.Text.Json.JsonSerializer.Serialize(packet);
+
+            _chatServer.Broadcast(Protocol.Message, jsonPacket);
+
             AppendPublicChat($"[Server Broadcast] {msg}");
             txtMessageInput.Clear();
         }
@@ -221,18 +259,76 @@ namespace ChatApp.Server.Forms
             if (string.IsNullOrWhiteSpace(txtMessageInput.Text) || _chatServer == null) return;
 
             var selectedItem = lvClients.SelectedItems[0];
-            if (selectedItem.Tag is Guid targetClientId)
+
+            if (selectedItem.Tag is Guid clientId)
             {
                 string msg = txtMessageInput.Text.Trim();
-                _chatServer.SendToTarget(targetClientId, Protocol.PrivateMessage, $"[Tin nhắn mật từ Server]: {msg}");
-                AppendPrivateChat($"[Mật tới {selectedItem.SubItems[1].Text}]: {msg}");
+                string receiverName = selectedItem.SubItems[1].Text;
+
+                var packet = new MessagePacket
+                {
+                    Type = Protocol.PrivateMessage,
+                    MessageId = Guid.NewGuid().ToString(),
+                    Sender = "Hệ thống (Mật)",
+                    Content = msg,
+                    Receiver = receiverName,
+                    AvatarBase64 = "",
+                    ReplyToId = "",
+                    ReplyToContent = ""
+                };
+
+                string jsonPacket = System.Text.Json.JsonSerializer.Serialize(packet);
+
+                bool isSent = _chatServer.SendToTarget(clientId, Protocol.PrivateMessage, jsonPacket);
+
+                if (isSent)
+                {
+                    AppendPublicChat($"[Server gửi mật tới {receiverName}]: {msg}");
+                }
+                else
+                {
+                    MessageBox.Show("Gửi thất bại! Người dùng này có thể đã offline.", "Lỗi");
+                }
+
                 txtMessageInput.Clear();
             }
         }
 
+        // FIX DỨT ĐIỂM LỖI EMOJI: Chèn danh sách biểu tượng cảm xúc dạng văn bản Unicode chuẩn vào ô nhập liệu
+        // FIX NÂNG CẤP: Bấm vào hiện ra 1 danh sách (Menu) Emoji để chọn từng cái
         private void BtnEmoji_Click(object sender, EventArgs e)
         {
-            txtMessageInput.AppendText("😊❤️😂👍🔥");
+            if (txtMessageInput == null) return;
+
+            // 1. Khởi tạo một Menu thả xuống
+            ContextMenuStrip emojiMenu = new ContextMenuStrip();
+
+            // Đặt font Segoe UI Emoji để các biểu tượng cảm xúc không bị lỗi ô vuông
+            emojiMenu.Font = new Font("Segoe UI Emoji", 10F, FontStyle.Regular);
+
+            // 2. Danh sách các Emoji bạn muốn cho Admin chọn
+            string[] emojis = { "😊", "❤️", "😂", "👍", "🔥", "😎", "😮", "😢", "🎉", "👏" };
+
+            // 3. Vòng lặp tự động tạo từng dòng Item cho Menu
+            foreach (string emoji in emojis)
+            {
+                ToolStripMenuItem item = new ToolStripMenuItem(emoji);
+
+                // Sự kiện khi Admin click chọn 1 Emoji cụ thể trong List
+                item.Click += (s, ev) =>
+                {
+                    txtMessageInput.AppendText(emoji); // Chèn emoji vào ô nhập liệu
+                    txtMessageInput.Focus();           // Giữ con trỏ chuột ở ô nhập
+                };
+
+                emojiMenu.Items.Add(item);
+            }
+
+            // 4. Hiển thị Menu ngay tại vị trí của nút Emoji trên giao diện
+            if (sender is Control btn)
+            {
+                emojiMenu.Show(btn, new Point(0, btn.Height));
+            }
         }
 
         public void AppendPublicChat(string message)
@@ -258,7 +354,9 @@ namespace ChatApp.Server.Forms
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
-        { 
-            _chatServer?.Stop(); base.OnFormClosing(e); }
+        {
+            _chatServer?.Stop();
+            base.OnFormClosing(e);
+        }
     }
 }

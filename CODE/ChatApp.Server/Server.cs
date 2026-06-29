@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using ChatApp.Shared.Network;
 using ChatApp.Server.Forms;
@@ -23,6 +25,7 @@ namespace ChatApp.Server
             _listener = new TcpListener(IPAddress.Any, port);
             _clients = new ConcurrentDictionary<Guid, ClientHandler>();
             _router = new MessageRouter(this);
+            _form = form;
         }
 
         public void Start()
@@ -58,7 +61,6 @@ namespace ChatApp.Server
                     {
                         tcpClient.Close();
                     }
-
                 }
                 catch (Exception ex)
                 {
@@ -67,19 +69,64 @@ namespace ChatApp.Server
             }
         }
 
+        // Phát loa công khai cho tất cả mọi người (Public) - ĐÃ ĐỒNG BỘ THỜI GIAN VÀ KHÔI PHỤC REPLY
+        // Phát loa công khai cho tất cả mọi người (Public)
+        // Phát loa công khai cho tất cả mọi người (Public)
         // Phát loa công khai cho tất cả mọi người (Public)
         public void Broadcast(Protocol protocol, string jsonPayload, Guid? senderId = null)
         {
             string safePayload = jsonPayload ?? string.Empty;
 
+            if (!string.IsNullOrEmpty(safePayload) && safePayload.StartsWith("{"))
+            {
+                try
+                {
+                    // CẤU HÌNH QUAN TRỌNG: Ép hệ thống không phân biệt chữ hoa / chữ thường khi đọc JSON
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        PropertyNamingPolicy = null // Giữ nguyên định dạng gốc của Client gửi lên
+                    };
+
+                    // Giải mã an toàn chuỗi JSON về Object MessagePacket để chỉnh sửa trực tiếp thuộc tính
+                    var packet = JsonSerializer.Deserialize<MessagePacket>(safePayload, options);
+                    if (packet != null)
+                    {
+                        // Kiểm tra xem trường người gửi có bị trống hay không (Chấp nhận cả trường hợp gán chữ "Ẩn danh")
+                        if (string.IsNullOrEmpty(packet.Sender) || packet.Sender == "Ẩn danh")
+                        {
+                            // Nếu trống, tra cứu ID mạng từ Server để lấy tên thật đã lưu trong ClientHandler
+                            if (senderId.HasValue && _clients.TryGetValue(senderId.Value, out var senderHandler))
+                            {
+                                packet.Sender = senderHandler.ClientName ?? "Ẩn danh";
+                                packet.AvatarBase64 = senderHandler.AvatarBase64;
+                            }
+                        }
+
+                        // Luôn cập nhật mốc thời gian chuẩn từ Server (Định dạng Giờ:Phút)
+                        packet.TimeSent = DateTime.Now.ToString("HH:mm");
+
+                        // Mã hóa ngược lại thành chuỗi JSON sạch sẽ để gửi đi
+                        safePayload = JsonSerializer.Serialize(packet, options);
+                    }
+                }
+                catch
+                {
+                    // Bỏ qua nếu chuỗi truyền vào không phải cấu trúc JSON mẫu MessagePacket
+                }
+            }
+
             foreach (var client in _clients.Values)
             {
+                // Chống dội ngược tại Server: Không gửi ngược lại tin nhắn cho chính người vừa bấm nút gửi
                 if (senderId.HasValue && client.Id == senderId.Value)
                     continue;
 
                 client?.SendAsync(protocol, safePayload);
             }
         }
+
+
 
         // Gửi tin nhắn riêng tư đích danh cho 1 người (Private)
         public bool SendToTarget(Guid targetClientId, Protocol protocol, string jsonPayload)
@@ -101,15 +148,12 @@ namespace ChatApp.Server
 
                 _form.UpdateClientList(_clients);
             }
-            
-
         }
 
         public void Log(string message)
         {
             OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
         }
-        // ==================== THÊM ĐOẠN NÀY VÀO FILE SERVER.CS ====================
 
         // Hàm trục xuất 1 Client đích danh khỏi phòng chat
         public void KickClient(Guid clientId)
@@ -138,7 +182,45 @@ namespace ChatApp.Server
                 KickClient(clientId);
             }
         }
+        
+        // CÁC HÀM BỔ TRỢ MỚI CHO GIAO TIẾP VÀ ĐỒNG BỘ TRẠNG THÁI
+       
+        // 1. Hàm lấy danh sách toàn bộ User đang Online để cập nhật lên giao diện Client
+        public string GetAllOnlineUsernames()
+        {
+            // Lọc ra những Client đã có tên (đã qua bước Connect thành công)
+            var onlineUsers = new System.Collections.Generic.List<string>();
 
+            foreach (var client in _clients.Values)
+            {
+                if (!string.IsNullOrEmpty(client.ClientName))
+                {
+                    onlineUsers.Add(client.ClientName);
+                }
+            }
+
+            // Nối danh sách bằng dấu phẩy để Client dễ dàng Split(",")
+            return string.Join(",", onlineUsers);
+        }
+
+        // 2. Hàm gửi tin nhắn mật đích danh dựa theo Tên người dùng (Username) thay vì Guid
+        public bool SendToTargetByUsername(string targetUsername, Protocol protocol, string jsonPayload)
+        {
+            if (string.IsNullOrEmpty(targetUsername)) return false;
+
+            // Duyệt qua sổ xưng danh để tìm Client có ClientName khớp với yêu cầu
+            foreach (var client in _clients.Values)
+            {
+                if (string.Equals(client.ClientName, targetUsername, StringComparison.OrdinalIgnoreCase))
+                {
+                    client.SendAsync(protocol, jsonPayload ?? string.Empty);
+                    return true; // Gửi thành công
+                }
+            }
+
+            Log($"[Cảnh báo] Không tìm thấy user '{targetUsername}' để gửi tin nhắn mật.");
+            return false; // Người nhận không tồn tại hoặc đã offline
+        }
 
         public void Stop()
         {

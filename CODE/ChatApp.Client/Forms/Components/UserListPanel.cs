@@ -1,48 +1,52 @@
 using System;
-using System.Collections.Generic;
 using System.Windows.Forms;
 
-namespace ChatApp.Client.Components
+namespace ChatApp.Client.Forms.Components
 {
-    public partial class UserListPanel : UserControl
+    public class UserListPanel : UserControl
     {
-        public event Action<string> UserSelected;
+        private ListBox lstUsers;
+        public event Action<string> OnUserSelected;
 
         public UserListPanel()
         {
-            InitializeComponent();
+            lstUsers = new ListBox { Dock = DockStyle.Fill };
+            lstUsers.SelectedIndexChanged += LstUsers_SelectedIndexChanged;
+            this.Controls.Add(lstUsers);
+
+            // Khởi tạo giá trị mặc định ban đầu
+            ResetList();
         }
 
-        public void UpdateUserList(List<string> onlineUsers, string currentUsername)
+        public void ResetList()
         {
-            if (lstUsers == null) return;
-
-            if (lstUsers.InvokeRequired)
-            {
-                lstUsers.Invoke(new Action(() => UpdateUserList(onlineUsers, currentUsername)));
-                return;
-            }
-
             lstUsers.Items.Clear();
-            foreach (var user in onlineUsers)
+            lstUsers.Items.Add("All");
+            lstUsers.SelectedIndex = 0;
+        }
+
+        public void AddUser(string username)
+        {
+            if (!lstUsers.Items.Contains(username))
             {
-                if (user != currentUsername)
-                {
-                    lstUsers.Items.Add(user);
-                }
+                lstUsers.Items.Add(username);
             }
         }
 
-        public string GetSelectedUser()
+        public void RemoveUser(string username)
         {
-            return lstUsers?.SelectedItem?.ToString() ?? string.Empty;
+            if (lstUsers.Items.Contains(username))
+            {
+                lstUsers.Items.Remove(username);
+                if (lstUsers.SelectedIndex == -1) lstUsers.SelectedIndex = 0;
+            }
         }
 
-        private void lstUsers_SelectedIndexChanged(object sender, EventArgs e)
+        private void LstUsers_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (lstUsers.SelectedItem != null)
             {
-                UserSelected?.Invoke(lstUsers.SelectedItem.ToString());
+                OnUserSelected?.Invoke(lstUsers.SelectedItem.ToString());
             }
         }
     }

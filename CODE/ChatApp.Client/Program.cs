@@ -1,4 +1,4 @@
-using Client.Forms;
+using ChatApp.Client.Forms;
 
 namespace Client
 {

@@ -1,56 +1,45 @@
 using System;
-using System.Drawing;
 using System.IO;
-using System.Threading.Tasks;
+using System.Drawing;
 
 namespace ChatApp.Client.Features
 {
     public static class AvatarManager
     {
-        public static async Task<string> ConvertImageToBase64Async(Image image)
+        // Mã hóa ảnh từ file thành chuỗi chuỗi mã hóa Base64 để gửi qua Socket real-time
+        public static string ImageToBase64(string imagePath)
         {
-            if (image == null) return string.Empty;
-
-            return await Task.Run(() =>
+            try
             {
-                try
-                {
-                    using (MemoryStream ms = new MemoryStream())
-                    {
-                        using (Bitmap bmp = new Bitmap(image))
-                        {
-                            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                            byte[] imageBytes = ms.ToArray();
-                            return Convert.ToBase64String(imageBytes);
-                        }
-                    }
-                }
-                catch
-                {
-                    return string.Empty;
-                }
-            });
+                if (!File.Exists(imagePath)) return string.Empty;
+                byte[] imageBytes = File.ReadAllBytes(imagePath);
+                return Convert.ToBase64String(imageBytes);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
-        public static async Task<Image> ConvertBase64ToImageAsync(string base64String)
+        // Giải mã chuỗi Base64 nhận từ mạng về thành đối tượng Image hiển thị lên giao diện
+        public static Image Base64ToImage(string base64String)
         {
-            if (string.IsNullOrEmpty(base64String)) return null;
-
-            return await Task.Run(() =>
+            try
             {
-                try
+                if (string.IsNullOrEmpty(base64String)) return null;
+
+                // ĐÃ SỬA: Sử dụng hàm chuẩn duy nhất của C# để chuyển chuỗi Base64 thành mảng byte
+                byte[] bytes = Convert.FromBase64String(base64String);
+
+                using (MemoryStream ms = new MemoryStream(bytes))
                 {
-                    byte[] imageBytes = Convert.FromBase64String(base64String);
-                    using (MemoryStream ms = new MemoryStream(imageBytes))
-                    {
-                        return new Bitmap(Image.FromStream(ms));
-                    }
+                    return Image.FromStream(ms);
                 }
-                catch
-                {
-                    return null;
-                }
-            });
+            }
+            catch   
+            {
+                return null;
+            }
         }
     }
 }

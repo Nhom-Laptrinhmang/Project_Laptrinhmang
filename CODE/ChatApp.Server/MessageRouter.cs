@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using System.Collections.Generic;
 using ChatApp.Shared.Network;
 
 namespace ChatApp.Server
@@ -24,9 +25,29 @@ namespace ChatApp.Server
                 switch (protocol)
                 {
                     case Protocol.Connect:
-                        handler.ClientName = safeData;
-                        _server.Log($"User [{handler.ClientName}] (ID: {senderId}) đã đăng nhập.");
-                        _server.Broadcast(Protocol.Connect, $"Hệ thống: {handler.ClientName} đã tham gia phòng.");
+                        // 1. CHỮA LỖI TÊN: Bóc tách JSON thay vì gán nguyên chuỗi thô
+                        var connectData = JsonSerializer.Deserialize<MessagePacket>(safeData);
+                        if (connectData != null)
+                        {
+                            handler.ClientName = connectData.Sender;
+                            handler.AvatarBase64 = connectData.AvatarBase64;
+                            _server.Log($"User [{handler.ClientName}] (ID: {senderId}) đã đăng nhập.");
+
+                            // Phát loa thông báo tham gia
+                            var connectPacket = new MessagePacket
+                            {
+                                Type = Protocol.Connect,
+                                Sender = "Hệ thống",
+                                Content = $"{handler.ClientName} đã tham gia phòng chat."
+                            };
+                            _server.Broadcast(Protocol.Connect, JsonSerializer.Serialize(connectPacket));
+
+                            // 2. CHỮA LỖI ONLINE LIST: Yêu cầu Server lấy danh sách tên và Broadcast
+                            BroadcastCurrentUserList();
+
+                            // 3. CHỮA LỖI LỊCH SỬ CHAT: Gửi toàn bộ lịch sử cho riêng ông này
+                            SendHistoryToNewClient(senderId);
+                        }
                         break;
 
                     case Protocol.UpdateAvatar:
@@ -34,67 +55,57 @@ namespace ChatApp.Server
                         _server.Log($"User [{handler.ClientName}] vừa cập nhật hình ảnh đại diện.");
                         break;
 
-                    // XỬ LÝ CHAT PRIVATE (RIÊNG TƯ)
                     case Protocol.PrivateMessage:
-                        var privatePacket = JsonSerializer.Deserialize<ChatPacket>(safeData);
-                        if (privatePacket != null)
+                        var privatePacket = JsonSerializer.Deserialize<MessagePacket>(safeData);
+                        if (privatePacket != null && !string.IsNullOrEmpty(privatePacket.Receiver))
                         {
-                            privatePacket.SenderId = senderId.ToString();
-                            privatePacket.SenderName = handler.ClientName ?? "Ẩn danh";
+                            privatePacket.Sender = handler.ClientName ?? "Ẩn danh";
                             privatePacket.AvatarBase64 = handler.AvatarBase64;
 
                             string processedJson = JsonSerializer.Serialize(privatePacket);
+                            _server.Log($"[{privatePacket.Sender}] CHAT MẬT tới [{privatePacket.Receiver}]: {privatePacket.Content}");
 
-                            // Kiểm tra xem Client có truyền lên ID người nhận hợp lệ không
-                            if (!string.IsNullOrEmpty(privatePacket.ReceiverId) && Guid.TryParse(privatePacket.ReceiverId, out Guid targetGuid))
-                            {
-                                _server.Log($"[{privatePacket.SenderName}] CHAT RIÊNG tới [ID: {privatePacket.ReceiverId?.Substring(0, 5)}]: {privatePacket.Content}");
+                            // Gửi cho người nhận (Cần đảm bảo ChatServer của bạn có hàm này)
+                            _server.SendToTargetByUsername(privatePacket.Receiver, Protocol.PrivateMessage, processedJson);
 
-                                // 1. Gửi cho người nhận đích danh
-                                bool isSent = _server.SendToTarget(targetGuid, Protocol.PrivateMessage, processedJson);
-
-                                if (isSent)
-                                {
-                                    // 2. Gửi ngược lại cho chính người gửi để giao diện hiển thị lịch sử đối thoại của họ
-                                    _server.SendToTarget(senderId, Protocol.PrivateMessage, processedJson);
-                                }
-                                else
-                                {
-                                    // Báo lỗi cho người gửi nếu người nhận đã rời phòng chat
-                                    _server.Log($"Lỗi: Không tìm thấy người nhận {privatePacket.ReceiverId}. Có thể họ đã offline.");
-                                }
-                            }
+                            // Gửi lại cho chính mình để UI bên mình cũng hiện tin nhắn đó
+                            _server.SendToTarget(senderId, Protocol.PrivateMessage, processedJson);
                         }
                         break;
 
-                    // XỬ LÝ CHAT PUBLIC, REPLY, FORWARD (CÔNG KHAI)
                     case Protocol.Message:
                     case Protocol.Reply:
                     case Protocol.Forward:
-                        var chatPacket = JsonSerializer.Deserialize<ChatPacket>(safeData);
+                        var chatPacket = JsonSerializer.Deserialize<MessagePacket>(safeData);
                         if (chatPacket != null)
                         {
-                            chatPacket.SenderId = senderId.ToString();
-                            chatPacket.SenderName = handler.ClientName ?? "Ẩn danh";
+                            chatPacket.Sender = handler.ClientName ?? "Ẩn danh";
                             chatPacket.AvatarBase64 = handler.AvatarBase64;
 
-                            if (protocol == Protocol.Reply)
-                                _server.Log($"[{chatPacket.SenderName}] REPLY tin nhắn [{chatPacket.ReplyToMessageId?.Substring(0, 5)}]: {chatPacket.Content}");
-                            else if (protocol == Protocol.Forward)
-                                _server.Log($"[{chatPacket.SenderName}] FORWARD tin nhắn: {chatPacket.Content}");
-                            else
-                                _server.Log($"[{chatPacket.SenderName}] CHAT PUBLIC: {chatPacket.Content}");
-
+                            // Đóng gói lại thành JSON chuẩn
                             string processedJson = JsonSerializer.Serialize(chatPacket);
-                            _history.Save(chatPacket.SenderName, chatPacket.Content);
 
-                            // Phát loa cho toàn bộ mọi người trong phòng cùng nhận
-                            _server.Broadcast(protocol, processedJson);
+                            // Lưu vào bộ nhớ đệm lịch sử
+                            _history.Save(chatPacket.Sender, chatPacket.Content, chatPacket.AvatarBase64, protocol);
+
+                            // Broadcast cho tất cả TRỪ người gửi (chống dội ngược)
+                            _server.Broadcast(protocol, processedJson, senderId);
                         }
                         break;
 
                     case Protocol.Disconnect:
-                        _server.Log($"User {senderId} gửi yêu cầu rời ứng dụng.");
+                        _server.Log($"User [{handler.ClientName}] gửi yêu cầu rời ứng dụng.");
+
+                        var dcPacket = new MessagePacket
+                        {
+                            Type = Protocol.Disconnect,
+                            Sender = "Hệ thống",
+                            Content = $"{handler.ClientName} đã thoát khỏi phòng."
+                        };
+                        _server.Broadcast(Protocol.Disconnect, JsonSerializer.Serialize(dcPacket));
+
+                        // Cập nhật lại danh sách Online vì vừa có người thoát
+                        BroadcastCurrentUserList();
                         break;
 
                     default:
@@ -105,6 +116,34 @@ namespace ChatApp.Server
             catch (Exception ex)
             {
                 _server.Log($"Lỗi xử lý định tuyến dữ liệu: {ex.Message}");
+            }
+        }
+
+        // --- CÁC HÀM BỔ TRỢ ĐỂ CHẠY LOGIC ĐỒNG BỘ ---
+
+        private void BroadcastCurrentUserList()
+        {
+            // Yêu cầu class ChatServer trả về danh sách các Username đang online (phân tách bằng dấu phẩy)
+            string usersStr = _server.GetAllOnlineUsernames();
+
+            var listPacket = new MessagePacket
+            {
+                Type = Protocol.UserList,
+                Content = usersStr
+            };
+
+            _server.Broadcast(Protocol.UserList, JsonSerializer.Serialize(listPacket));
+        }
+
+        private void SendHistoryToNewClient(Guid newClientId)
+        {
+            // Lấy danh sách tin nhắn cũ từ ChatHistory
+            List<MessagePacket> pastMessages = _history.GetAllMessages();
+
+            foreach (var packet in pastMessages)
+            {
+                string json = JsonSerializer.Serialize(packet);
+                _server.SendToTarget(newClientId, packet.Type, json);
             }
         }
     }
