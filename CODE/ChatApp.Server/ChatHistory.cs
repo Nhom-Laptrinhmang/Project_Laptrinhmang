@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using ChatApp.Shared.Network;
 
@@ -6,50 +5,46 @@ namespace ChatApp.Server
 {
     public class ChatHistory
     {
-        // Chuyển sang lưu danh sách các Object gói tin thay vì string thô
-        private readonly List<MessagePacket> _historyPackets;
+        // Cuốn sổ lưu trữ thực sự
+        private readonly List<MessagePacket> _messages = new();
         private readonly object _lock = new object();
+        private readonly int _maxLimit;
 
-        // CHỐNG TRÀN RAM: Chỉ giữ lại tối đa 100 tin nhắn gần nhất
-        private const int MaxHistorySize = 100;
-
-        public ChatHistory()
+        // Khởi tạo giới hạn lưu trữ mặc định là 50 tin nhắn
+        public ChatHistory(int maxLimit = 50)
         {
-            _historyPackets = new List<MessagePacket>();
+            _maxLimit = maxLimit;
         }
 
-        // Cập nhật hàm Save để nhận đủ tham số từ MessageRouter
-        public void Save(string user, string message, string avatarBase64 = "", Protocol protocol = Protocol.Message)
+        // Hàm ghi thêm tin nhắn mới vào sổ
+        public void AddMessage(MessagePacket packet)
         {
-            // Đóng gói lại thành chuẩn MessagePacket hệt như lúc Client gửi lên
-            var packet = new MessagePacket
-            {
-                Type = protocol,
-                Sender = string.IsNullOrEmpty(user) ? "Ẩn danh" : user,
-                Content = string.IsNullOrEmpty(message) ? string.Empty : message,
-                AvatarBase64 = avatarBase64,
-                TimeSent = DateTime.Now.ToString("HH:mm") // Lưu luôn thời gian Server
-            };
-
             lock (_lock)
             {
-                _historyPackets.Add(packet);
-
-                // Nếu danh sách vượt quá 100, xóa cái cũ nhất (ở vị trí index 0)
-                if (_historyPackets.Count > MaxHistorySize)
+                _messages.Add(packet);
+                // Nếu vượt quá giới hạn thì xóa tin nhắn cũ nhất (tin ở đầu mảng)
+                if (_messages.Count > _maxLimit)
                 {
-                    _historyPackets.RemoveAt(0);
+                    _messages.RemoveAt(0);
                 }
             }
         }
 
-        // Đổi tên và kiểu trả về để khớp hoàn toàn với lệnh gọi ở MessageRouter
-        public List<MessagePacket> GetAllMessages()
+        // Hàm trích xuất bản sao của cuốn sổ để gửi cho Client
+        public List<MessagePacket> GetHistory()
         {
             lock (_lock)
             {
-                // Trả về một bản sao độc lập (Shallow Copy) để luồng khác không can thiệp làm crash
-                return new List<MessagePacket>(_historyPackets);
+                return new List<MessagePacket>(_messages);
+            }
+        }
+
+        // Hàm xóa sổ khi Server tắt
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _messages.Clear();
             }
         }
     }

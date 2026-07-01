@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using ChatApp.Shared.Network;
 
@@ -22,6 +23,9 @@ namespace ChatApp.Server
         private readonly MessageRouter _router;
 
         private bool _isConnected;
+
+        // BỔ SUNG: Khóa Semaphore để ép các luồng gửi tin nhắn mật/công khai phải xếp hàng, chống dính dòng byte mạng
+        private readonly SemaphoreSlim _sendSemaphore = new SemaphoreSlim(1, 1);
 
         public event Action<Guid>? OnDisconnected;
 
@@ -53,7 +57,7 @@ namespace ChatApp.Server
             }
         }
 
-        public void StartListening()
+            public void StartListening()
         {
             if (_stream != null && _isConnected)
             {
@@ -68,34 +72,53 @@ namespace ChatApp.Server
                 return;
             }
 
-            BinaryReader reader = new BinaryReader(_stream);
-
-            try
+            // Bọc BinaryReader vào khối using để tự động giải phóng bộ nhớ RAM khi ngắt kết nối mạng
+            using (BinaryReader reader = new BinaryReader(_stream, Encoding.UTF8, true))
             {
-                while (_isConnected && _tcpClient.Connected)
+                try
                 {
-                    int dataLength = reader.ReadInt32();
+                    while (_isConnected && _tcpClient.Connected)
+                    {
+                        // 1. Đọc kích thước gói tin (4 byte đầu tiên)
+                        int dataLength = reader.ReadInt32();
 
-                    int protocolInt = reader.ReadInt32();
+                        // 2. Đọc mã định danh giao thức (4 byte tiếp theo)
+                        int protocolInt = reader.ReadInt32();
+                        Protocol protocol = (Protocol)protocolInt;
 
-                    Protocol protocol = (Protocol)protocolInt;
+                        // 3. Đọc chính xác số byte nội dung văn bản còn lại của gói tin
+                        byte[] messageBytes = reader.ReadBytes(dataLength - 4);
+                        string message = Encoding.UTF8.GetString(messageBytes);
 
-                    byte[] messageBytes =
-                        reader.ReadBytes(dataLength - 4);
+                        // ==========================================================
+                        // FIX LỖI CS1501: Giải mã chuỗi JSON thành MessagePacket
+                        // ==========================================================
+                        MessagePacket packet = null;
+                        try
+                        {
+                            // Ép kiểu chuỗi JSON nhận được thành dạng Object để Router dễ xử lý
+                            packet = System.Text.Json.JsonSerializer.Deserialize<MessagePacket>(message, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        }
+                        catch
+                        {
+                            // Đề phòng trường hợp Client gửi chuỗi rỗng hoặc không phải JSON hợp lệ
+                            packet = new MessagePacket();
+                        }
 
-                    string message =
-                        Encoding.UTF8.GetString(messageBytes);
+                        if (packet != null)
+                        {
+                            // Đồng bộ loại Protocol từ byte mạng vào thuộc tính Type của Packet
+                            packet.Type = protocol;
 
-                    _router.Route(
-                        Id,
-                        protocol,
-                        message,
-                        this);
+                            // 4. Định tuyến chuyển tiếp xử lý dữ liệu tới MessageRouter (GỌI ĐÚNG 2 THAM SỐ)
+                            _router.Route(this, packet);
+                        }
+                    }
                 }
-            }
-            catch
-            {
-                Disconnect();
+                catch
+                {
+                    Disconnect();
+                }
             }
         }
 
@@ -108,40 +131,43 @@ namespace ChatApp.Server
                 return;
             }
 
+            // Kích hoạt khóa bảo mật luồng: Bắt các luồng khác phải chờ luồng hiện tại ghi xong byte
+            await _sendSemaphore.WaitAsync();
+
             try
             {
-                // 1. Chuyển chuỗi tin nhắn thành mảng byte UTF-8
                 byte[] messageBytes = Encoding.UTF8.GetBytes(safeMessage);
 
-                // 2. Tính toán tổng độ dài dữ liệu thực tế gửi đi (4 byte Protocol + số byte của chuỗi)
+                // Tổng độ dài dữ liệu thực tế = 4 byte Protocol + độ dài mảng byte tin nhắn văn bản
                 int dataLength = 4 + messageBytes.Length;
 
-                // 3. Đóng gói dữ liệu vào MemoryStream
-                using MemoryStream memoryStream = new MemoryStream();
-                using BinaryWriter writer = new BinaryWriter(memoryStream, Encoding.UTF8);
+                using (MemoryStream memoryStream = new MemoryStream())
+                {
+                    using (BinaryWriter writer = new BinaryWriter(memoryStream, Encoding.UTF8))
+                    {
+                        writer.Write(dataLength);
+                        writer.Write((int)protocol);
+                        writer.Write(messageBytes);
+                        writer.Flush();
 
-                // Ghi độ dài dữ liệu (4 byte)
-                writer.Write(dataLength);
-                // Ghi mã Protocol (4 byte)
-                writer.Write((int)protocol);
-                // Ghi mảng byte nội dung tin nhắn
-                writer.Write(messageBytes);
+                        byte[] packet = memoryStream.ToArray();
 
-                writer.Flush();
-
-                // 4. Lấy mảng byte hoàn chỉnh và gửi qua NetworkStream mạng
-                byte[] packet = memoryStream.ToArray();
-
-                // Sử dụng Semaphore hoặc khóa lock nếu có nhiều luồng cùng gọi SendAsync (Khuyến nghị nếu chat nhóm đông)
-                await _stream.WriteAsync(packet, 0, packet.Length);
-                await _stream.FlushAsync();
+                        // Ghi dữ liệu đồng bộ xuống đường truyền mạng socket an toàn
+                        await _stream.WriteAsync(packet, 0, packet.Length);
+                        await _stream.FlushAsync();
+                    }
+                }
             }
             catch
             {
                 Disconnect();
             }
+            finally
+            {
+                // Giải phóng khóa để nhường quyền cho tin nhắn của người tiếp theo được gửi đi
+                _sendSemaphore.Release();
+            }
         }
-
 
         public void Disconnect()
         {
@@ -152,12 +178,21 @@ namespace ChatApp.Server
 
             _isConnected = false;
 
-            if (_stream != null)
+            try
             {
-                _stream.Close();
+                if (_stream != null)
+                {
+                    _stream.Close();
+                }
+                _tcpClient.Close();
+            }
+            catch
+            {
+                // Bỏ qua lỗi phát sinh trong quá trình đóng socket thô
             }
 
-            _tcpClient.Close();
+            // Giải phóng luôn tài nguyên của khóa Semaphore để tránh rò rỉ RAM hệ thống
+            _sendSemaphore.Dispose();
 
             if (OnDisconnected != null)
             {

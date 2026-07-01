@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using ChatApp.Shared.Network;
 using ChatApp.Server.Forms;
@@ -17,6 +16,11 @@ namespace ChatApp.Server
         private readonly MessageRouter _router;
         private bool _isRunning;
         private readonly ServerForm _form;
+
+        // ==========================================================
+        // GIAO VIỆC LƯU LỊCH SỬ CHO CHATHISTORY QUẢN LÝ ĐỘC LẬP
+        // ==========================================================
+        public ChatHistory History { get; } = new ChatHistory();
 
         public event Action<string>? OnLog;
 
@@ -53,6 +57,8 @@ namespace ChatApp.Server
                     if (_clients.TryAdd(clientId, handler))
                     {
                         handler.OnDisconnected += RemoveClient;
+
+                        // FIX LỖI CS8209: Gọi hàm void bình thường, không dùng "_ ="
                         handler.StartListening();
 
                         _form.UpdateClientList(_clients);
@@ -69,9 +75,6 @@ namespace ChatApp.Server
             }
         }
 
-        // Phát loa công khai cho tất cả mọi người (Public) - ĐÃ ĐỒNG BỘ THỜI GIAN VÀ KHÔI PHỤC REPLY
-        // Phát loa công khai cho tất cả mọi người (Public)
-        // Phát loa công khai cho tất cả mọi người (Public)
         // Phát loa công khai cho tất cả mọi người (Public)
         public void Broadcast(Protocol protocol, string jsonPayload, Guid? senderId = null)
         {
@@ -85,17 +88,15 @@ namespace ChatApp.Server
                     var options = new JsonSerializerOptions
                     {
                         PropertyNameCaseInsensitive = true,
-                        PropertyNamingPolicy = null // Giữ nguyên định dạng gốc của Client gửi lên
+                        PropertyNamingPolicy = null
                     };
 
-                    // Giải mã an toàn chuỗi JSON về Object MessagePacket để chỉnh sửa trực tiếp thuộc tính
+                    // Giải mã chuỗi JSON về Object MessagePacket
                     var packet = JsonSerializer.Deserialize<MessagePacket>(safePayload, options);
                     if (packet != null)
                     {
-                        // Kiểm tra xem trường người gửi có bị trống hay không (Chấp nhận cả trường hợp gán chữ "Ẩn danh")
                         if (string.IsNullOrEmpty(packet.Sender) || packet.Sender == "Ẩn danh")
                         {
-                            // Nếu trống, tra cứu ID mạng từ Server để lấy tên thật đã lưu trong ClientHandler
                             if (senderId.HasValue && _clients.TryGetValue(senderId.Value, out var senderHandler))
                             {
                                 packet.Sender = senderHandler.ClientName ?? "Ẩn danh";
@@ -103,8 +104,16 @@ namespace ChatApp.Server
                             }
                         }
 
-                        // Luôn cập nhật mốc thời gian chuẩn từ Server (Định dạng Giờ:Phút)
+                        // Luôn cập nhật mốc thời gian chuẩn từ Server 
                         packet.TimeSent = DateTime.Now.ToString("HH:mm");
+
+                        // ==========================================================
+                        // LƯU TIN NHẮN VÀO CUỐN SỔ LỊCH SỬ THÔNG QUA CHATHISTORY
+                        // ==========================================================
+                        if (protocol == Protocol.Message)
+                        {
+                            History.AddMessage(packet);
+                        }
 
                         // Mã hóa ngược lại thành chuỗi JSON sạch sẽ để gửi đi
                         safePayload = JsonSerializer.Serialize(packet, options);
@@ -122,32 +131,60 @@ namespace ChatApp.Server
                 if (senderId.HasValue && client.Id == senderId.Value)
                     continue;
 
-                client?.SendAsync(protocol, safePayload);
+                // Thêm "_ =" để tắt cảnh báo Vàng CS4014
+                _ = client?.SendAsync(protocol, safePayload);
             }
         }
-
-
 
         // Gửi tin nhắn riêng tư đích danh cho 1 người (Private)
         public bool SendToTarget(Guid targetClientId, Protocol protocol, string jsonPayload)
         {
             if (_clients.TryGetValue(targetClientId, out var client))
             {
-                client?.SendAsync(protocol, jsonPayload ?? string.Empty);
+                _ = client?.SendAsync(protocol, jsonPayload ?? string.Empty);
                 return true;
             }
-            return false; // Trả về false nếu không tìm thấy người nhận (họ đã offline)
+            return false;
         }
 
         private void RemoveClient(Guid clientId)
         {
             if (_clients.TryRemove(clientId, out var handler))
             {
-                Log($"Client {clientId} đã ngắt kết nối.");
-                Broadcast(Protocol.Disconnect, clientId.ToString());
+                Log($"Client {clientId} ({handler.ClientName}) đã ngắt kết nối.");
+
+                // 1. Tạo gói tin Disconnect CHUẨN chứa Tên người dùng (Sender)
+                var disconnectPacket = new MessagePacket
+                {
+                    Type = Protocol.Disconnect,
+                    Sender = handler.ClientName ?? "Ai đó",
+                    Content = $"Người dùng {handler.ClientName} đã rời phòng chat!"
+                };
+
+                // Ép kiểu Object thành chuỗi JSON để gửi đi
+                string jsonPayload = JsonSerializer.Serialize(disconnectPacket);
+                Broadcast(Protocol.Disconnect, jsonPayload);
 
                 _form.UpdateClientList(_clients);
+
+                // 2. Tự động đồng bộ lại danh sách Online cho TẤT CẢ những người còn lại
+                BroadcastUserList();
             }
+        }
+
+        // ==========================================================
+        // THÊM HÀM MỚI NÀY ĐỂ GỌI MỖI KHI CÓ NGƯỜI VÀO/RA
+        // ==========================================================
+        public void BroadcastUserList()
+        {
+            var userListPacket = new MessagePacket
+            {
+                Type = Protocol.UserList,
+                Content = GetAllOnlineUsernames() // Lấy danh sách tên ngăn cách bởi dấu phẩy
+            };
+
+            string jsonPayload = JsonSerializer.Serialize(userListPacket);
+            Broadcast(Protocol.UserList, jsonPayload);
         }
 
         public void Log(string message)
@@ -155,40 +192,30 @@ namespace ChatApp.Server
             OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {message}");
         }
 
-        // Hàm trục xuất 1 Client đích danh khỏi phòng chat
+        // Hàm trục xuất 1 Client
         public void KickClient(Guid clientId)
         {
-            // Tìm kiếm xem Client này có đang online trong cuốn sổ danh sách không
             if (_clients.TryGetValue(clientId, out var client))
             {
                 Log($"[Hệ Thống] Đang thực hiện trục xuất Client có ID: {clientId}");
-
-                // 1. Gửi tín hiệu thông báo ép buộc ngắt kết nối về phía app của khách
-                client.SendAsync(Protocol.Disconnect, "Bạn đã bị quản trị viên trục xuất khỏi máy chủ!");
-
-                // 2. Chủ động đóng đường truyền mạng của Client đó (Hàm này tự động gạch tên họ khỏi ListView luôn)
+                _ = client.SendAsync(Protocol.Disconnect, "Bạn đã bị quản trị viên trục xuất khỏi máy chủ!");
                 client.Disconnect();
             }
         }
 
-        // Hàm trục xuất SẠCH SẼ toàn bộ Client đang kết nối
+        // Hàm giải tán phòng
         public void KickAll()
         {
             Log("[Hệ Thống] Đang thực hiện giải tán phòng, trục xuất tất cả mọi người.");
-
-            // Quét qua toàn bộ danh sách ID mạng đang hoạt động để đuổi từng người một
             foreach (var clientId in _clients.Keys)
             {
                 KickClient(clientId);
             }
         }
-        
-        // CÁC HÀM BỔ TRỢ MỚI CHO GIAO TIẾP VÀ ĐỒNG BỘ TRẠNG THÁI
-       
-        // 1. Hàm lấy danh sách toàn bộ User đang Online để cập nhật lên giao diện Client
+
+        // Hàm lấy chuỗi danh sách User Online
         public string GetAllOnlineUsernames()
         {
-            // Lọc ra những Client đã có tên (đã qua bước Connect thành công)
             var onlineUsers = new System.Collections.Generic.List<string>();
 
             foreach (var client in _clients.Values)
@@ -198,28 +225,50 @@ namespace ChatApp.Server
                     onlineUsers.Add(client.ClientName);
                 }
             }
-
-            // Nối danh sách bằng dấu phẩy để Client dễ dàng Split(",")
             return string.Join(",", onlineUsers);
         }
 
-        // 2. Hàm gửi tin nhắn mật đích danh dựa theo Tên người dùng (Username) thay vì Guid
+        // Hàm gửi tin nhắn mật qua Tên
         public bool SendToTargetByUsername(string targetUsername, Protocol protocol, string jsonPayload)
         {
             if (string.IsNullOrEmpty(targetUsername)) return false;
 
-            // Duyệt qua sổ xưng danh để tìm Client có ClientName khớp với yêu cầu
             foreach (var client in _clients.Values)
             {
                 if (string.Equals(client.ClientName, targetUsername, StringComparison.OrdinalIgnoreCase))
                 {
-                    client.SendAsync(protocol, jsonPayload ?? string.Empty);
-                    return true; // Gửi thành công
+                    _ = client.SendAsync(protocol, jsonPayload ?? string.Empty);
+                    return true;
                 }
             }
 
             Log($"[Cảnh báo] Không tìm thấy user '{targetUsername}' để gửi tin nhắn mật.");
-            return false; // Người nhận không tồn tại hoặc đã offline
+            return false;
+        }
+
+        // ==============================================================================
+        // BỘ LỌC KIỂM TRA TRÙNG TÊN ĐĂNG NHẬP
+        // ==============================================================================
+        public bool IsUsernameTaken(string username, Guid currentClientId)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return false;
+
+            foreach (var client in _clients.Values)
+            {
+                if (client.Id == currentClientId) continue;
+
+                if (string.Equals(client.ClientName, username.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Hàm kích hoạt lệnh vẽ lại bảng danh sách Client bên giao diện
+        public void RefreshClientList()
+        {
+            _form.UpdateClientList(_clients);
         }
 
         public void Stop()
@@ -232,6 +281,10 @@ namespace ChatApp.Server
                 client?.Disconnect();
             }
             _clients.Clear();
+
+            // Yêu cầu anh chàng ChatHistory tự xóa sổ khi tắt Server
+            History.Clear();
+
             Log("Server đã dừng.");
         }
     }
