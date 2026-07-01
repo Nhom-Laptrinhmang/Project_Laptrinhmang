@@ -60,7 +60,8 @@ namespace ChatApp.Server.Forms
                 var item = new ListViewItem(counter.ToString());
                 item.SubItems.Add(client.ClientName ?? "Ẩn danh");
                 item.SubItems.Add(client.Id.ToString().Substring(0, 8));
-                item.SubItems.Add(DateTime.Now.ToString("HH:mm:ss"));
+                //item.SubItems.Add(DateTime.Now.ToString("HH:mm:ss"));
+                item.SubItems.Add(client.ConnectedTime.ToString("HH:mm:ss"));
                 item.Tag = client.Id; // Lưu mã gốc ẩn vào đây
 
                 lvClients.Items.Add(item);

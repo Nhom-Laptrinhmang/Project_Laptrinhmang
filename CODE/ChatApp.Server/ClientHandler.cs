@@ -15,6 +15,8 @@ namespace ChatApp.Server
         public string ClientName { get; set; } = string.Empty;
 
         public string AvatarBase64 { get; set; } = string.Empty;
+        public DateTime ConnectedTime { get; set; } = DateTime.Now;
+
 
         private readonly TcpClient _tcpClient;
 
