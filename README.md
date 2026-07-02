@@ -41,7 +41,7 @@
 
 ## 🚀 Hướng dẫn cài đặt và chạy
 
-###  Cài đặt Visual Studio
+###  Bước 1 cài đặt Visual Studio (nếu chưa có)
 
 1. Tải **Visual Studio Community 2026** (miễn phí) tại:
    [https://visualstudio.microsoft.com/fr/vs/community]
@@ -55,7 +55,7 @@
 
 ---
 
-###  Tải mã nguồn về máy
+### Bước 2 tải mã nguồn về máy
 
 ** — Dùng Git (khuyến nghị):**
 
@@ -80,7 +80,7 @@ cd Project_Laptrinhmang
 
 ---
 
-### Bước 5 — Chạy Server
+### Bước 4 — Chạy Server
 
 1. Trên thanh công cụ chọn tools -> Command line -> Developer PowerShell.
 2. Sau khi mở được Developer PowerShell, gõ lệnh cd CODE/Server -> dotnet run 
@@ -89,14 +89,13 @@ cd Project_Laptrinhmang
 
 ---
 
-### Bước 6 — Chạy Client
+### Bước 5 — Chạy Client
 
 1. Trên thanh công cụ chọn tools -> Command line -> Developer PowerShell.
 2. Sau khi mở được Developer PowerShell, gõ lệnh cd CODE/Server -> dotnet run 
 3. Sau khi Client chạy, Nhập tên, nhập
 ---
 
-### Bước 7 — C
 
 
 ## 👥 Thành viên nhóm
